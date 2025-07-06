@@ -161,7 +161,9 @@ jobs:
           "manifest_version": 3,
           "name": "FMHY Redirect",
           "version": "${{ steps.get_version.outputs.VERSION_NUMBER }}",
-          "description": "Redirects unofficial FMHY domains to the official fmhy.xyz domain",
+          "description": "Redirects all FMHY links containing NSFW content to the SFW version (https://fmhy.xyz/)",
+          "author": "qing762",
+          "homepage_url": "https://github.com/qing762/fmhy-redirect",
           "permissions": [
             "activeTab"
           ],
@@ -241,7 +243,9 @@ jobs:
           "manifest_version": 2,
           "name": "FMHY Redirect",
           "version": "${{ steps.get_version.outputs.VERSION_NUMBER }}",
-          "description": "Redirects unofficial FMHY domains to the official fmhy.xyz domain",
+          "description": "Redirects all FMHY links containing NSFW content to the SFW version (https://fmhy.xyz/)",
+          "author": "qing762",
+          "homepage_url": "https://github.com/qing762/fmhy-redirect",
           "permissions": [
             "activeTab"
           ],
