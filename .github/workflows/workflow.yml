@@ -24,6 +24,10 @@ on:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      pull-requests: read
     
     steps:
     - name: Checkout code
@@ -344,15 +348,14 @@ jobs:
         ### Firefox:
         1. Download \`fmhy-redirect-extension-firefox-${{ steps.get_version.outputs.VERSION }}.zip\`
         2. Firefox → \`about:debugging\` → "This Firefox" → "Load Temporary Add-on"
-        
-        ## 🌐 Supported Domains
+          ## 🌐 Supported Domains
         Redirects these domains to **fmhy.xyz**:
         \`fmhy.net\` • \`fmhy.pages.dev\` • \`fmhy.lol\` • \`fmhy.github.io\` • \`fmhy.vercel.app\` • \`rentry.co/FMHY\` • \`github.com/fmhy/FMHY/wiki\` • \`rentry.org/FMHY\`
         EOF
         
     - name: Create Release
       if: steps.check_release.outputs.RELEASE_EXISTS == 'false'
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ steps.get_version.outputs.VERSION }}
         name: FMHY Redirect Extension ${{ steps.get_version.outputs.VERSION }}
@@ -362,5 +365,4 @@ jobs:
           fmhy-redirect-extension-firefox-${{ steps.get_version.outputs.VERSION }}.zip
         draft: false
         prerelease: ${{ steps.release_notes.outputs.RELEASE_TYPE == 'major' }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        token: ${{ secrets.GITHUB_TOKEN }}
