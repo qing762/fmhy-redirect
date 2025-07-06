@@ -1,0 +1,20 @@
+{
+    "manifest_version": 3,
+    "name": "FMHY Redirect",
+    "version": "1.0",
+    "description": "Redirect all FMHY links containing NSFW content to the SFW version (https://fmhy.xyz/).",
+    "author": "qing762",
+    "homepage_url":"https://qing762.is-a.dev",
+    "permissions": [
+      "activeTab"
+    ],
+    "icons": {
+      "128": "icon128.png"
+    },
+    "content_scripts": [
+      {
+        "matches": ["<all_urls>"],
+        "js": ["content.js"]
+      }
+    ]
+}
