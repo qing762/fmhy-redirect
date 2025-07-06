@@ -1,0 +1,366 @@
+name: Build and Release Extension
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      custom_notes:
+        description: 'Custom release notes (optional - will be added to auto-generated notes)'
+        required: false
+        type: string
+      release_type:
+        description: 'Type of release'
+        required: false
+        default: 'patch'
+        type: choice
+        options:
+        - patch
+        - minor
+        - major
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+      
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Generate version from commit count
+      id: get_version
+      run: |
+        # Get total commit count
+        COMMIT_COUNT=$(git rev-list --count HEAD)
+        
+        # Create version in format: v1.COMMIT_COUNT
+        VERSION="v1.${COMMIT_COUNT}"
+        VERSION_NUMBER="1.${COMMIT_COUNT}"
+        
+        echo "COMMIT_COUNT=${COMMIT_COUNT}" >> $GITHUB_OUTPUT
+        echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+        echo "VERSION_NUMBER=${VERSION_NUMBER}" >> $GITHUB_OUTPUT
+        
+        echo "Generated version: ${VERSION} (based on ${COMMIT_COUNT} commits)"
+        
+    - name: Get latest release info
+      id: latest_release
+      run: |
+        # Get the latest release tag
+        LATEST_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || echo "")
+        if [ -z "$LATEST_TAG" ]; then
+          LATEST_TAG=$(git tag --sort=-version:refname | head -n 1 2>/dev/null || echo "")
+        fi
+        
+        echo "LATEST_TAG=${LATEST_TAG}" >> $GITHUB_OUTPUT
+        echo "Latest release found: ${LATEST_TAG:-'None'}"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Check if release already exists
+      id: check_release
+      run: |
+        if gh release view ${{ steps.get_version.outputs.VERSION }} >/dev/null 2>&1; then
+          echo "RELEASE_EXISTS=true" >> $GITHUB_OUTPUT
+          echo "Release ${{ steps.get_version.outputs.VERSION }} already exists, skipping..."
+        else
+          echo "RELEASE_EXISTS=false" >> $GITHUB_OUTPUT
+          echo "Release ${{ steps.get_version.outputs.VERSION }} does not exist, proceeding..."
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Analyze commits and generate dynamic release notes
+      if: steps.check_release.outputs.RELEASE_EXISTS == 'false'
+      id: release_notes
+      run: |
+        LATEST_TAG="${{ steps.latest_release.outputs.LATEST_TAG }}"
+        
+        # Determine commit range
+        if [ -n "$LATEST_TAG" ]; then
+          COMMIT_RANGE="${LATEST_TAG}..HEAD"
+          echo "Analyzing commits since ${LATEST_TAG}"
+        else
+          # If no previous release, get last 10 commits
+          COMMIT_RANGE="HEAD~10..HEAD"
+          echo "No previous release found, analyzing recent commits"
+        fi
+        
+        # Get commit messages and categorize them
+        FEATURES=""
+        FIXES=""
+        IMPROVEMENTS=""
+        DOCS=""
+        OTHER=""
+        
+        while IFS= read -r commit; do
+          commit_msg=$(echo "$commit" | sed 's/^[a-f0-9]* //')
+          commit_lower=$(echo "$commit_msg" | tr '[:upper:]' '[:lower:]')
+          
+          case "$commit_lower" in
+            *"feat:"*|*"feature:"*|*"add"*|*"new"*)
+              FEATURES="${FEATURES}- ${commit_msg}\n"
+              ;;
+            *"fix:"*|*"bug"*|*"patch"*|*"hotfix"*)
+              FIXES="${FIXES}- ${commit_msg}\n"
+              ;;
+            *"improve:"*|*"enhancement:"*|*"optimize"*|*"refactor"*|*"update"*)
+              IMPROVEMENTS="${IMPROVEMENTS}- ${commit_msg}\n"
+              ;;
+            *"doc:"*|*"docs:"*|*"readme"*|*"documentation"*)
+              DOCS="${DOCS}- ${commit_msg}\n"
+              ;;
+            *)
+              OTHER="${OTHER}- ${commit_msg}\n"
+              ;;
+          esac
+        done < <(git log --oneline $COMMIT_RANGE 2>/dev/null || git log --oneline -10)
+        
+        # Determine release type based on commits
+        RELEASE_TYPE="patch"
+        if [ -n "$FEATURES" ]; then
+          RELEASE_TYPE="minor"
+        fi
+        if echo "$FIXES$IMPROVEMENTS$OTHER" | grep -qi "breaking\|major\|incompatible"; then
+          RELEASE_TYPE="major"
+        fi
+        
+        # Override with manual input if provided
+        if [ "${{ github.event.inputs.release_type }}" != "" ]; then
+          RELEASE_TYPE="${{ github.event.inputs.release_type }}"
+        fi
+        
+        # Save categorized changes
+        echo "FEATURES=${FEATURES}" >> $GITHUB_OUTPUT
+        echo "FIXES=${FIXES}" >> $GITHUB_OUTPUT
+        echo "IMPROVEMENTS=${IMPROVEMENTS}" >> $GITHUB_OUTPUT
+        echo "DOCS=${DOCS}" >> $GITHUB_OUTPUT
+        echo "OTHER=${OTHER}" >> $GITHUB_OUTPUT
+        echo "RELEASE_TYPE=${RELEASE_TYPE}" >> $GITHUB_OUTPUT
+        
+        echo "Detected release type: ${RELEASE_TYPE}"
+        
+    - name: Create manifest.json
+      if: steps.check_release.outputs.RELEASE_EXISTS == 'false'
+      run: |
+        cat > manifest.json << EOF
+        {
+          "manifest_version": 3,
+          "name": "FMHY Redirect",
+          "version": "${{ steps.get_version.outputs.VERSION_NUMBER }}",
+          "description": "Redirects unofficial FMHY domains to the official fmhy.xyz domain",
+          "permissions": [
+            "activeTab"
+          ],
+          "content_scripts": [
+            {
+              "matches": [
+                "*://fmhy.net/*",
+                "*://fmhy.pages.dev/*",
+                "*://fmhy.lol/*",
+                "*://fmhy.github.io/*",
+                "*://fmhy.vercel.app/*",
+                "*://rentry.co/FMHY*",
+                "*://github.com/fmhy/FMHY/wiki*",
+                "*://rentry.org/FMHY*"
+              ],
+              "js": ["content.js"],
+              "run_at": "document_start"
+            }
+          ],
+          "icons": {
+            "16": "icon16.png",
+            "48": "icon48.png",
+            "128": "icon128.png"
+          }
+        }
+        EOF
+        
+    - name: Create missing icon sizes (if not present)
+      if: steps.check_release.outputs.RELEASE_EXISTS == 'false'
+      run: |
+        # Check if we have the main icon
+        if [ -f "icon128.png" ]; then
+          echo "Found icon128.png, using it as base"
+          
+          # Create smaller sizes from icon128.png if they don't exist
+          if [ ! -f "icon16.png" ]; then
+            sudo apt-get update && sudo apt-get install -y imagemagick
+            convert icon128.png -resize 16x16 icon16.png
+            echo "Created icon16.png from icon128.png"
+          fi
+          
+          if [ ! -f "icon48.png" ]; then
+            if ! command -v convert &> /dev/null; then
+              sudo apt-get update && sudo apt-get install -y imagemagick
+            fi
+            convert icon128.png -resize 48x48 icon48.png
+            echo "Created icon48.png from icon128.png"
+          fi
+        else
+          echo "No icon128.png found, creating default icons"
+          # Create default icons using ImageMagick
+          sudo apt-get update && sudo apt-get install -y imagemagick
+          convert -size 16x16 xc:blue icon16.png
+          convert -size 48x48 xc:blue icon48.png
+          convert -size 128x128 xc:blue icon128.png
+        fi
+        
+        # List created icons
+        ls -la icon*.png 2>/dev/null || echo "No icon files found"
+        
+    - name: Create extension package
+      if: steps.check_release.outputs.RELEASE_EXISTS == 'false'
+      run: |
+        mkdir -p dist
+        cp content.js manifest.json dist/
+        if [ -f "icon16.png" ]; then cp icon*.png dist/; fi
+        cd dist
+        zip -r ../fmhy-redirect-extension-${{ steps.get_version.outputs.VERSION }}.zip .
+        
+    - name: Create Firefox package
+      if: steps.check_release.outputs.RELEASE_EXISTS == 'false'
+      run: |
+        mkdir -p dist-firefox
+        cp content.js dist-firefox/
+        cat > dist-firefox/manifest.json << EOF
+        {
+          "manifest_version": 2,
+          "name": "FMHY Redirect",
+          "version": "${{ steps.get_version.outputs.VERSION_NUMBER }}",
+          "description": "Redirects unofficial FMHY domains to the official fmhy.xyz domain",
+          "permissions": [
+            "activeTab"
+          ],
+          "content_scripts": [
+            {
+              "matches": [
+                "*://fmhy.net/*",
+                "*://fmhy.pages.dev/*",
+                "*://fmhy.lol/*",
+                "*://fmhy.github.io/*",
+                "*://fmhy.vercel.app/*",
+                "*://rentry.co/FMHY*",
+                "*://github.com/fmhy/FMHY/wiki*",
+                "*://rentry.org/FMHY*"
+              ],
+              "js": ["content.js"],
+              "run_at": "document_start"
+            }
+          ],
+          "icons": {
+            "16": "icon16.png",
+            "48": "icon48.png",
+            "128": "icon128.png"
+          }
+        }
+        EOF
+        if [ -f "icon16.png" ]; then cp icon*.png dist-firefox/; fi
+        cd dist-firefox
+        zip -r ../fmhy-redirect-extension-firefox-${{ steps.get_version.outputs.VERSION }}.zip .
+        
+    - name: Generate dynamic release notes
+      if: steps.check_release.outputs.RELEASE_EXISTS == 'false'
+      run: |
+        # Get release type emoji
+        case "${{ steps.release_notes.outputs.RELEASE_TYPE }}" in
+          "major") TYPE_EMOJI="🚀" ;;
+          "minor") TYPE_EMOJI="✨" ;;
+          "patch") TYPE_EMOJI="🔧" ;;
+          *) TYPE_EMOJI="📦" ;;
+        esac
+        
+        cat > release_notes.md << EOF
+        # ${TYPE_EMOJI} FMHY Redirect Extension ${{ steps.get_version.outputs.VERSION }}
+        
+        **Build #${{ steps.get_version.outputs.COMMIT_COUNT }}** • **${{ steps.release_notes.outputs.RELEASE_TYPE }}** release • Auto-generated from commit analysis
+        
+        EOF
+        
+        # Add custom notes if provided
+        if [ "${{ github.event.inputs.custom_notes }}" != "" ]; then
+          cat >> release_notes.md << EOF
+        ## 📝 Release Notes
+        ${{ github.event.inputs.custom_notes }}
+        
+        EOF
+        fi
+        
+        # Add categorized changes
+        if [ "${{ steps.release_notes.outputs.FEATURES }}" != "" ]; then
+          cat >> release_notes.md << EOF
+        ## ✨ New Features
+        ${{ steps.release_notes.outputs.FEATURES }}
+        EOF
+        fi
+        
+        if [ "${{ steps.release_notes.outputs.FIXES }}" != "" ]; then
+          cat >> release_notes.md << EOF
+        ## 🐛 Bug Fixes
+        ${{ steps.release_notes.outputs.FIXES }}
+        EOF
+        fi
+        
+        if [ "${{ steps.release_notes.outputs.IMPROVEMENTS }}" != "" ]; then
+          cat >> release_notes.md << EOF
+        ## 🔧 Improvements
+        ${{ steps.release_notes.outputs.IMPROVEMENTS }}
+        EOF
+        fi
+        
+        if [ "${{ steps.release_notes.outputs.DOCS }}" != "" ]; then
+          cat >> release_notes.md << EOF
+        ## 📚 Documentation
+        ${{ steps.release_notes.outputs.DOCS }}
+        EOF
+        fi
+        
+        if [ "${{ steps.release_notes.outputs.OTHER }}" != "" ]; then
+          cat >> release_notes.md << EOF
+        ## 🔄 Other Changes
+        ${{ steps.release_notes.outputs.OTHER }}
+        EOF
+        fi
+        
+        # Add installation instructions
+        cat >> release_notes.md << EOF
+        
+        ## 📦 Installation
+        
+        ### Chrome/Edge/Brave:
+        1. Download \`fmhy-redirect-extension-${{ steps.get_version.outputs.VERSION }}.zip\`
+        2. Extract the zip file
+        3. Open Chrome → \`chrome://extensions/\` → Enable "Developer mode" → "Load unpacked"
+        
+        ### Firefox:
+        1. Download \`fmhy-redirect-extension-firefox-${{ steps.get_version.outputs.VERSION }}.zip\`
+        2. Firefox → \`about:debugging\` → "This Firefox" → "Load Temporary Add-on"
+        
+        ## 🌐 Supported Domains
+        Redirects these domains to **fmhy.xyz**:
+        \`fmhy.net\` • \`fmhy.pages.dev\` • \`fmhy.lol\` • \`fmhy.github.io\` • \`fmhy.vercel.app\` • \`rentry.co/FMHY\` • \`github.com/fmhy/FMHY/wiki\` • \`rentry.org/FMHY\`
+        EOF
+        
+    - name: Create Release
+      if: steps.check_release.outputs.RELEASE_EXISTS == 'false'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.get_version.outputs.VERSION }}
+        name: FMHY Redirect Extension ${{ steps.get_version.outputs.VERSION }}
+        body_path: release_notes.md
+        files: |
+          fmhy-redirect-extension-${{ steps.get_version.outputs.VERSION }}.zip
+          fmhy-redirect-extension-firefox-${{ steps.get_version.outputs.VERSION }}.zip
+        draft: false
+        prerelease: ${{ steps.release_notes.outputs.RELEASE_TYPE == 'major' }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -3,40 +3,68 @@ const nsfwDomains = [
     "fmhy.net", 
     "fmhy.pages.dev",
     "fmhy.lol",
-    "fmhy.github.io/edit",
+    "fmhy.github.io",
     "fmhy.vercel.app",
-    "rentry.co/FMHY",
-    "github.com/fmhy/FMHY/wiki",
-    "rentry.org/FMHY",
 ];
+
+const specificFMHYUrls = [
+    "rentry.co/FMHY",
+    "rentry.org/FMHY", 
+    "github.com/fmhy/FMHY/wiki",
+    "fmhy.github.io/edit"
+];
+
 const currentDomain = window.location.hostname;
 const currentPath = window.location.pathname;
+const currentUrl = window.location.href;
 
-if (nsfwDomains.some(domain => currentDomain.includes(domain))) {
-    if (currentPath === "/download") {
-        window.location.href = `https://${sfwDomain}/download`;
-    } else {
+function shouldRedirect(url) {
+    if (nsfwDomains.some(domain => currentDomain === domain)) {
+        return true;
+    }
+
+    return specificFMHYUrls.some(fmhyUrl => url.includes(fmhyUrl));
+}
+
+if (shouldRedirect(currentUrl)) {
+    if (specificFMHYUrls.some(fmhyUrl => currentUrl.includes(fmhyUrl))) {
         window.location.href = `https://${sfwDomain}`;
+    } else {
+        const currentFullPath = window.location.pathname + window.location.search + window.location.hash;
+        window.location.href = `https://${sfwDomain}${currentFullPath}`;
     }
 }
 
 function replaceUnofficialLinks() {
     const links = document.querySelectorAll('a[href]');
     links.forEach(link => {
-        nsfwDomains.forEach(domain => {
-            if (link.href.includes(domain)) {
-                const url = new URL(link.href);
+        const originalHref = link.href;
+
+        if (shouldRedirectLink(originalHref)) {
+            const url = new URL(originalHref);
+
+            if (specificFMHYUrls.some(fmhyUrl => originalHref.includes(fmhyUrl))) {
+                link.href = `https://${sfwDomain}`;
+            } else {
                 url.hostname = sfwDomain;
-                if (url.pathname === "/download") {
-                    url.pathname = '/download';
-                } else {
-                    url.pathname = '';
-                }
-                url.search = '';
                 link.href = url.toString();
             }
-        });
+        }
     });
+}
+
+function shouldRedirectLink(url) {
+    try {
+        const urlObj = new URL(url);
+
+        if (nsfwDomains.some(domain => urlObj.hostname === domain)) {
+            return true;
+        }
+
+        return specificFMHYUrls.some(fmhyUrl => url.includes(fmhyUrl));
+    } catch (e) {
+        return false;
+    }
 }
 
 replaceUnofficialLinks();
